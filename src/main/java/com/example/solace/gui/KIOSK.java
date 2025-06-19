@@ -2,14 +2,15 @@ package com.example.solace.gui;
 
 import com.example.solace.config.SolaceConfig;
 import com.solacesystems.jcsmp.*;
+
 import javax.swing.*;
 import java.awt.*;
 
-public class CheckoutApp extends JFrame {
-    private DefaultListModel<String> model = new DefaultListModel<>();
+public class KIOSK extends JFrame {
+    private final DefaultListModel<String> model = new DefaultListModel<>();
 
-    public CheckoutApp() throws JCSMPException {
-        super("Checkout App");
+    public KIOSK() throws JCSMPException {
+        super("CheckOut KIOSK");
         setSize(400, 300);
         setDefaultCloseOperation(EXIT_ON_CLOSE);
 
@@ -17,25 +18,23 @@ public class CheckoutApp extends JFrame {
         add(new JScrollPane(list), BorderLayout.CENTER);
         setVisible(true);
 
-        // Solace 연결
         JCSMPSession session = SolaceConfig.getSession();
         session.connect();
-
-        // Checkout 전용 큐(또는 토픽 바로)
-        Topic topic = JCSMPFactory.onlyInstance()
-            .createTopic("JY/SHOP/>/PAYMENT/SUCCESS"); // 와일드카드 사용
-
-        // Topic 구독 후 Direct Subscriber
         XMLMessageConsumer consumer = session.getMessageConsumer(new XMLMessageListener() {
             @Override
             public void onReceive(BytesXMLMessage msg) {
                 if (msg instanceof TextMessage tm) {
                     String text = tm.getText();
+                    String topic = msg.getDestination().getName(); // 구체적인 토픽 이름
+                    String tag = topic.contains("SUCCESS") ? "✅ 결제 성공" :
+                                 topic.contains("FAILURE") ? "❌ 결제 실패" : "💬 기타";
+
                     SwingUtilities.invokeLater(() ->
-                        model.add(0, "[" + java.time.LocalTime.now() + "] 결제 성공: " + text)
+                        model.add(0, "[" + java.time.LocalTime.now() + "] " + tag + ": " + text)
                     );
                 }
             }
+
             @Override
             public void onException(JCSMPException e) {
                 SwingUtilities.invokeLater(() ->
@@ -43,14 +42,23 @@ public class CheckoutApp extends JFrame {
                 );
             }
         });
-        session.addSubscription(topic);
-        consumer.start(); 
+
+        // ✅ 두 토픽 모두 구독
+        Topic successTopic = JCSMPFactory.onlyInstance().createTopic("JY/*/*/PAYMENT/SUCCESS");
+        Topic failureTopic = JCSMPFactory.onlyInstance().createTopic("JY/*/*/PAYMENT/FAILURE");
+        session.addSubscription(successTopic);
+        session.addSubscription(failureTopic);
+
+        consumer.start();
     }
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
-            try { new CheckoutApp(); }
-            catch (JCSMPException e) { e.printStackTrace(); }
+            try {
+                new KIOSK();
+            } catch (JCSMPException e) {
+                e.printStackTrace();
+            }
         });
     }
 }
