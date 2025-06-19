@@ -44,8 +44,8 @@ public class KIOSK extends JFrame {
         });
 
         // ✅ 두 토픽 모두 구독
-        Topic successTopic = JCSMPFactory.onlyInstance().createTopic("JY/*/*/PAYMENT/SUCCESS");
-        Topic failureTopic = JCSMPFactory.onlyInstance().createTopic("JY/*/*/PAYMENT/FAILURE");
+        Topic successTopic = JCSMPFactory.onlyInstance().createTopic("JY/*/*/PAYMENT/SUCCESS/>");
+        Topic failureTopic = JCSMPFactory.onlyInstance().createTopic("JY/*/*/PAYMENT/FAILURE/>");
         session.addSubscription(successTopic);
         session.addSubscription(failureTopic);
 
