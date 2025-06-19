@@ -16,11 +16,6 @@ public class SoundAlertRequestReply {
         JCSMPSession session = SolaceConfig.getSession();
         session.connect();
 
-        Queue requestQueue = JCSMPFactory.onlyInstance().createQueue("Q.JAEYOUNG3");
-        ConsumerFlowProperties flowProps = new ConsumerFlowProperties();
-        flowProps.setEndpoint(requestQueue);
-        flowProps.setStartState(true);
-
         producer = session.getMessageProducer(new HandleEvent() {
             @Override
             public void handleError(String messageID, JCSMPException e, long timestamp) {
@@ -28,11 +23,10 @@ public class SoundAlertRequestReply {
                     Topic errorTopic = JCSMPFactory.onlyInstance().createTopic("JY/SYSTEM/LOG/ERROR");
                     TextMessage errorMsg = JCSMPFactory.onlyInstance().createMessage(TextMessage.class);
                     errorMsg.setText(
-                        "❌ SOUND 요청 실패\n" +
-                        "메시지 ID: " + messageID + "\n" +
-                        "사유: " + e.getMessage() + "\n" +
-                        "시간: " + new java.util.Date(timestamp)
-                    );
+                            "❌ 전송 실패 발생\n" +
+                                    "메시지 ID: " + messageID + "\n" +
+                                    "사유: " + e.getMessage() + "\n" +
+                                    "시간: " + new java.util.Date(timestamp));
                     errorMsg.setDeliveryMode(DeliveryMode.PERSISTENT);
                     producer.send(errorMsg, errorTopic);
                     System.out.println("📤 실패 로그 전송 완료 → " + errorTopic.getName());
@@ -42,24 +36,37 @@ public class SoundAlertRequestReply {
             }
         });
 
+        Queue requestQueue = JCSMPFactory.onlyInstance().createQueue("Q.JAEYOUNG/REQUEST");
+        ConsumerFlowProperties flowProps = new ConsumerFlowProperties();
+        flowProps.setEndpoint(requestQueue);
+        flowProps.setStartState(true);
+
         FlowReceiver receiver = session.createFlow(new XMLMessageListener() {
             @Override
             public void onReceive(BytesXMLMessage msg) {
                 Destination replyTo = msg.getReplyTo();
-                if (replyTo == null) {
-                    System.err.println("⚠️ ReplyTo 큐가 지정되지 않았습니다. 응답 생략됨.");
-                    return;
-                }
-
-                System.out.println("📥 경보 요청 수신 → 비프음 실행");
-                startBeeping();
+                String content = ((TextMessage) msg).getText();
 
                 try {
                     TextMessage reply = JCSMPFactory.onlyInstance().createMessage(TextMessage.class);
-                    reply.setText("✅ SOUND_ACK");
                     reply.setDeliveryMode(DeliveryMode.PERSISTENT);
-                    producer.send(reply, replyTo);
-                    System.out.println("📤 응답 전송 완료 → " + replyTo.getName());
+
+                    if ("STOP".equalsIgnoreCase(content)) {
+                        stopBeeping();
+                        System.out.println("🛑 사운드 종료 요청 처리");
+                        reply.setText("✅ SOUND_STOP_ACK");
+                    } else {
+                        startBeeping();
+                        System.out.println("🚨 사운드 재생 요청 처리");
+                        reply.setText("✅ SOUND_START_ACK");
+                    }
+
+                    if (replyTo != null) {
+                        producer.send(reply, replyTo);
+                        System.out.println("📨 응답 전송: " + reply.getText());
+                    } else {
+                        System.err.println("⚠️ ReplyTo 큐 없음. 응답 생략됨");
+                    }
                 } catch (JCSMPException e) {
                     e.printStackTrace();
                 }
@@ -73,17 +80,25 @@ public class SoundAlertRequestReply {
 
         receiver.start();
         System.out.println("🔔 경보 큐 대기 시작");
-
-        while (true) Thread.sleep(1000);
+        while (true)
+            Thread.sleep(1000);
     }
 
     private static void startBeeping() {
-        if (beeper != null && !beeper.isShutdown()) return;
+        if (beeper != null && !beeper.isShutdown())
+            return;
         System.out.println("🚨 비프음 시작");
         beeper = Executors.newSingleThreadScheduledExecutor();
-        beeper.scheduleAtFixedRate(() ->
-            Toolkit.getDefaultToolkit().beep(),
-            0, 2, TimeUnit.SECONDS
-        );
+        beeper.scheduleAtFixedRate(() -> Toolkit.getDefaultToolkit().beep(), 0, 2, TimeUnit.SECONDS);
+    }
+
+    private static void stopBeeping() {
+        if (beeper != null && !beeper.isShutdown()) {
+            System.out.println("🛑 비프음 종료");
+            beeper.shutdownNow(); // 즉시 중지
+            beeper = null;
+        } else {
+            System.out.println("ℹ️ 비프음이 실행 중이 아님");
+        }
     }
 }

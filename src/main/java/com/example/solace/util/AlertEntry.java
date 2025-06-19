@@ -1,5 +1,8 @@
 package com.example.solace.util;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+
 public class AlertEntry {
     private final String text;
     private final String originalTs;
@@ -11,9 +14,9 @@ public class AlertEntry {
         this.originalTs = originalTs;
     }
 
-    public AlertEntry(String text, java.time.LocalTime time) {
+    public AlertEntry(String text, LocalDateTime time) {
         this.text = text;
-        this.originalTs = time.format(java.time.format.DateTimeFormatter.ISO_LOCAL_TIME);
+        this.originalTs = time.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
     }
 
     public String getText() {

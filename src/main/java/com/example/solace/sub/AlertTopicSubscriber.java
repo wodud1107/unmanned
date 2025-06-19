@@ -14,74 +14,84 @@ import java.util.function.Consumer;
 public class AlertTopicSubscriber {
     private final Consumer<String> onSecurityDetected;
     private final JCSMPSession session;
-    private final DefaultListModel<AlertEntry> listModel;
     private final XMLMessageProducer producer;
+    private final DefaultListModel<AlertEntry> listModel;
 
-    public AlertTopicSubscriber(Consumer<String> onSecurityDetected) throws JCSMPException {
+    public AlertTopicSubscriber(Consumer<String> onSecurityDetected, DefaultListModel<AlertEntry> model)
+            throws JCSMPException {
         this.onSecurityDetected = onSecurityDetected;
         this.session = SolaceConfig.getSession();
         this.session.connect();
-        this.producer = this.session.getMessageProducer(new HandleEvent());
-        this.listModel = new DefaultListModel<>();
-        subscribeToTopics(List.of("JY/*/*/SECURITY/THEFT", "JY/*/*/PAYMENT/FAILURE"));
+        this.producer = session.getMessageProducer(new HandleEvent());
+        this.listModel = model; // 주입받은 모델 사용
+        subscribeToTopics(List.of("JY/*/*/SECURITY/THEFT/>", "JY/*/*/PAYMENT/FAILURE/>"));
     }
 
     public void subscribeToTopics(List<String> topics) throws JCSMPException {
         for (String topicStr : topics) {
-            Topic topicFilter = JCSMPFactory.onlyInstance().createTopic(topicStr);
-            session.addSubscription(topicFilter);
+            session.addSubscription(JCSMPFactory.onlyInstance().createTopic(topicStr));
         }
 
         XMLMessageConsumer consumer = session.getMessageConsumer(new XMLMessageListener() {
-            @Override
             public void onReceive(BytesXMLMessage msg) {
                 if (msg instanceof TextMessage) {
-                    String text = ((TextMessage) msg).getText();
+                    String payload = ((TextMessage) msg).getText();
                     String topic = msg.getDestination().getName();
-                    String ts = LocalTime.now().format(DateTimeFormatter.ISO_LOCAL_TIME);
+
+                    String[] parts = payload.split("\\|", 2);
+                    String ts = parts[0];
+                    String content = parts.length > 1 ? parts[1] : payload;
 
                     SwingUtilities.invokeLater(() -> {
-                        listModel.add(0, new AlertEntry(text, ts));
-                        if (listModel.size() > 100)
-                            listModel.removeElementAt(100);
+                        listModel.add(0, new AlertEntry(content + " [" + topic + "]", ts));
                     });
 
                     if (topic.contains("/SECURITY/THEFT")) {
+                        sendSoundRequest();
                         onSecurityDetected.accept(topic);
                     }
                 }
             }
 
-            @Override
             public void onException(JCSMPException e) {
-                SwingUtilities.invokeLater(() -> listModel.add(0,
-                        new AlertEntry("⚠️ Subscriber error: " + e.getMessage(),
-                                LocalTime.now().format(DateTimeFormatter.ISO_LOCAL_TIME))));
+                e.printStackTrace();
             }
         });
-
         consumer.start();
     }
 
-    public void sendStartCommand() {
+    public void sendSoundRequest() {
         try {
-            Topic topic = JCSMPFactory.onlyInstance().createTopic("JY/SECURITY/ALERT");
-            TextMessage msg = JCSMPFactory.onlyInstance().createMessage(TextMessage.class);
-            msg.setText("START");
-            msg.setDeliveryMode(DeliveryMode.DIRECT);
-            producer.send(msg, topic);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
+            Queue requestQueue = JCSMPFactory.onlyInstance().createQueue("Q.JAEYOUNG/REQUEST");
+            Queue replyQueue = session.createTemporaryQueue();
 
-    public void sendStopCommand() {
-        try {
-            Topic topic = JCSMPFactory.onlyInstance().createTopic("JY/SECURITY/ALERT");
-            TextMessage msg = JCSMPFactory.onlyInstance().createMessage(TextMessage.class);
-            msg.setText("STOP");
-            msg.setDeliveryMode(DeliveryMode.DIRECT);
-            producer.send(msg, topic);
+            TextMessage request = JCSMPFactory.onlyInstance().createMessage(TextMessage.class);
+            request.setText("🔔 SOUND REQUEST");
+            request.setDeliveryMode(DeliveryMode.PERSISTENT);
+            request.setReplyTo(replyQueue);
+
+            // 응답 수신 설정
+            ConsumerFlowProperties replyFlowProps = new ConsumerFlowProperties();
+            replyFlowProps.setEndpoint(replyQueue);
+            replyFlowProps.setStartState(true);
+
+            session.createFlow(new XMLMessageListener() {
+                @Override
+                public void onReceive(BytesXMLMessage replyMsg) {
+                    if (replyMsg instanceof TextMessage) {
+                        System.out.println("✅ 응답 수신 완료: " + ((TextMessage) replyMsg).getText());
+                    }
+                }
+
+                @Override
+                public void onException(JCSMPException e) {
+                    e.printStackTrace();
+                }
+            }, replyFlowProps).start();
+
+            producer.send(request, requestQueue);
+            System.out.println("📨 SOUND 요청 전송: " + requestQueue.getName());
+
         } catch (Exception e) {
             e.printStackTrace();
         }
