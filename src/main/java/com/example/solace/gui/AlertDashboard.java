@@ -2,7 +2,10 @@ package com.example.solace.gui;
 
 import com.example.solace.config.SolaceConfig;
 import com.example.solace.util.AlertEntry;
+import com.example.solace.util.HandleEvent;
 import com.solacesystems.jcsmp.*;
+import com.solacesystems.jcsmp.Queue;
+
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.MouseAdapter;
@@ -66,13 +69,24 @@ public class AlertDashboard extends JFrame {
 
         JCSMPSession session = SolaceConfig.getSession();
         session.connect();
-        producer = session.getMessageProducer(new JCSMPStreamingPublishEventHandler() {
-            public void responseReceived(String messageID) {}
+        producer = session.getMessageProducer(new HandleEvent() {
+            @Override
             public void handleError(String messageID, JCSMPException e, long timestamp) {
-                SwingUtilities.invokeLater(() ->
-                    listModel.add(0, new AlertEntry("⚠️ 명령 전송 실패: " + e.getMessage(),
-                        LocalTime.now().format(DateTimeFormatter.ISO_LOCAL_TIME)))
-                );
+                try {
+                    Topic errorTopic = JCSMPFactory.onlyInstance().createTopic("JY/SYSTEM/LOG/ERROR");
+                    TextMessage errorMsg = JCSMPFactory.onlyInstance().createMessage(TextMessage.class);
+                    errorMsg.setText(
+                        "❌ 전송 실패 발생\n" +
+                        "메시지 ID: " + messageID + "\n" +
+                        "사유: " + e.getMessage() + "\n" +
+                        "시간: " + new java.util.Date(timestamp)
+                    );
+                    errorMsg.setDeliveryMode(DeliveryMode.PERSISTENT);
+                    producer.send(errorMsg, errorTopic);
+                    System.out.println("📤 실패 로그 전송 완료 → " + errorTopic.getName());
+                } catch (JCSMPException sendError) {
+                    System.err.println("⚠️ 실패 로그 전송 중 예외 발생: " + sendError.getMessage());
+                }
             }
         });
 
